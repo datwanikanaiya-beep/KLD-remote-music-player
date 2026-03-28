@@ -7,7 +7,7 @@
  */
 import React, { useState, useRef, useEffect } from 'react';
 import { Peer } from 'peerjs';
-import { ArrowLeft, Play, Pause, SkipBack, SkipForward, VolumeX, Volume2, Upload, Music } from 'lucide-react';
+import { ArrowLeft, Play, Pause, SkipBack, SkipForward, VolumeX, Volume2, Upload, Music, Repeat, Shuffle } from 'lucide-react';
 
 export default function Controller({ onBack }) {
   const [pairingCode, setPairingCode] = useState('');
@@ -20,10 +20,13 @@ export default function Controller({ onBack }) {
   const [volume, setVolume] = useState(1);
   const [isSending, setIsSending] = useState(false);
   const [transferProgress, setTransferProgress] = useState(0);
+  const [isLooping, setIsLooping] = useState(false);
+  const [isShuffle, setIsShuffle] = useState(false);
 
   const peerRef = useRef(null);
   const connRef = useRef(null);
   const transferRef = useRef(null);
+  const onEndedRef = useRef();
 
   useEffect(() => {
     peerRef.current = new Peer({ debug: 2 });
@@ -62,7 +65,7 @@ export default function Controller({ onBack }) {
          conn.send({ command: 'play' });
          setIsPlaying(true);
       } else if (data.type === 'event' && data.event === 'ended') {
-         handleNext();
+         if (onEndedRef.current) onEndedRef.current();
       }
     });
 
@@ -166,123 +169,190 @@ export default function Controller({ onBack }) {
   };
 
   const handleSeek = (e) => {
-    const newTime = parseFloat(e.target.value);
-    setCurrentTime(newTime);
-    if (connRef.current) {
-      connRef.current.send({ command: 'seek', time: newTime });
+    const time = parseFloat(e.target.value);
+    setCurrentTime(time);
+    if (connRef.current && connRef.current.open) {
+      connRef.current.send({ command: 'seek', time });
     }
+  };
+
+  const handleVolume = (e) => {
+    const newVol = parseFloat(e.target.value);
+    setVolume(newVol);
+    if (connRef.current && connRef.current.open) {
+      connRef.current.send({ command: 'volume', value: newVol });
+    }
+  };
+
+  const toggleLoop = () => setIsLooping(!isLooping);
+  const toggleShuffle = () => setIsShuffle(!isShuffle);
+
+  onEndedRef.current = () => {
+      if (isLooping) {
+         connRef.current.send({ command: 'seek', time: 0 });
+         connRef.current.send({ command: 'play' });
+      } else if (isShuffle) {
+         const next = Math.floor(Math.random() * files.length);
+         playTrack(files[next], next);
+      } else {
+         handleNext();
+      }
   };
 
   const activeTrack = currentIndex >= 0 ? files[currentIndex] : null;
 
   return (
     <div className="app-container">
-      <div className="glass-panel controller-view" style={{ position: 'relative' }}>
-        <button className="btn btn-secondary" onClick={onBack} style={{ position: 'absolute', top: 20, left: 20, zIndex: 10 }}>
-          <ArrowLeft size={20} />
-        </button>
-
-        <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+      <div className="dashboard-layout" style={{ position: 'relative' }}>
+        <div className="status-row">
+          <button className="btn btn-secondary btn-icon" onClick={onBack} style={{ padding: 10 }}>
+            <ArrowLeft size={18} />
+          </button>
           <div className="status-badge">
             <div className={`status-dot ${status === 'connected' ? 'connected' : status === 'connecting' ? 'connecting' : ''}`}></div>
-            {status === 'connected' ? 'Connected to Receiver' : status === 'connecting' ? 'Connecting...' : 'Not Connected'}
+            {status === 'connected' ? 'Connected' : status === 'connecting' ? 'Connecting...' : 'Not Connected'}
           </div>
         </div>
 
         {status !== 'connected' ? (
-          <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '40px' }}>
-            <h2 style={{ textAlign: 'center' }}>Pair Device</h2>
-            <input 
-              type="text" 
-              className="input-field" 
-              placeholder="ENTER PAIRING CODE" 
-              value={pairingCode}
-              onChange={(e) => setPairingCode(e.target.value)}
-              required
-              maxLength={6}
-            />
-            <button type="submit" className="btn btn-primary" disabled={status === 'connecting'}>
-              Connect
-            </button>
-          </form>
+          <div className="widget-card">
+              <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <h2 style={{ textAlign: 'center', margin: 0 }}>Pair Device</h2>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  placeholder="ENTER CODE" 
+                  value={pairingCode}
+                  onChange={(e) => setPairingCode(e.target.value)}
+                  required
+                  maxLength={6}
+                />
+                <button type="submit" className="btn btn-primary" disabled={status === 'connecting'}>
+                  Establish Connection
+                </button>
+              </form>
+          </div>
         ) : (
-          <div>
-            <div className="now-playing">
+          <>
+            <div className="widget-card now-playing" style={{ paddingBottom: 24 }}>
+              <div style={{ position: 'relative', width: 140, height: 140, margin: '0 auto 20px auto' }}>
+                  <svg width="140" height="140" viewBox="0 0 140 140" style={{ transform: 'rotate(-90deg)' }}>
+                      <circle cx="70" cy="70" r="64" fill="transparent" stroke="var(--card-border)" strokeWidth="6" />
+                      <circle 
+                         cx="70" cy="70" r="64" 
+                         fill="transparent" 
+                         stroke="var(--accent-color)" 
+                         strokeWidth="6" 
+                         strokeDasharray={2 * Math.PI * 64} 
+                         strokeDashoffset={(2 * Math.PI * 64) - ((currentTime / (duration || 1)) * (2 * Math.PI * 64))} 
+                         strokeLinecap="round" 
+                         style={{ transition: 'stroke-dashoffset 0.5s linear' }} 
+                      />
+                  </svg>
+                  <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Music size={32} color="var(--accent-color)" />
+                  </div>
+              </div>
+              
               {activeTrack ? (
                 <>
                   <div className="track-title">{activeTrack.name}</div>
-                  <p>{isSending ? "Sending track data to receiver..." : "Now Playing on Receiver"}</p>
-                  {isSending && (
-                      <div className="progress-container" style={{ margin: '15px auto', width: '80%' }}>
-                        <div className="progress-bar" style={{ width: `${transferProgress}%` }}></div>
-                        <div style={{ fontSize: '0.8rem', marginTop: '8px', color: 'var(--text-secondary)' }}>
-                           Transferring... {transferProgress}%
-                        </div>
-                      </div>
-                  )}
+                  <p>{isSending ? "Syncing track data buffer..." : "Playing on Remote Receiver"}</p>
                 </>
               ) : (
                 <>
                   <div className="track-title">No Track Selected</div>
-                  <p>Add some music to start playing.</p>
+                  <p>Upload music below to begin.</p>
                 </>
               )}
             </div>
 
-            <div className="controls-row">
-              <button className="btn btn-secondary btn-icon" onClick={handlePrev} disabled={currentIndex <= 0}>
-                <SkipBack />
-              </button>
-              <button className="btn btn-play btn-icon btn-icon-large" onClick={togglePlay} disabled={files.length === 0 || isSending}>
-                {isPlaying ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}
-              </button>
-              <button className="btn btn-secondary btn-icon" onClick={handleNext} disabled={currentIndex >= files.length - 1}>
-                <SkipForward />
-              </button>
-            </div>
-
-            <div style={{ marginTop: '20px' }}>
-              <input 
-                type="range" 
-                min="0" 
-                max={duration || 100} 
-                value={currentTime} 
-                onChange={handleSeek}
-                style={{ width: '100%', accentColor: 'var(--accent-color)' }}
-                disabled={!activeTrack || isSending}
-              />
-              <div className="time-display">
-                <span>{formatTime(currentTime)}</span>
-                <span>{formatTime(duration)}</span>
+            <div className="widget-card">
+              <div style={{ marginBottom: '15px' }}>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max={duration || 100} 
+                  value={currentTime} 
+                  onChange={handleSeek}
+                  style={{ width: '100%', accentColor: 'var(--accent-color)', height: 4, cursor: 'pointer' }}
+                  disabled={!activeTrack || isSending}
+                />
+                <div className="time-display" style={{ marginTop: 8 }}>
+                  <span>{formatTime(currentTime)}</span>
+                  <span>{formatTime(duration)}</span>
+                </div>
               </div>
-            </div>
 
-            <div style={{ marginTop: '30px' }}>
-               <label className="file-label">
-                  <input type="file" className="file-input" multiple accept="audio/*" onChange={handleFileSelect} />
-                  <Upload size={32} style={{ marginBottom: 12, opacity: 0.7 }} />
-                  <div>Select Local Audio Files</div>
-               </label>
-            </div>
-
-            {files.length > 0 && (
-              <div className="playlist">
-                <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginBottom: '10px' }}>Queue</h3>
-                {files.map((file, i) => (
-                  <div 
-                    key={i} 
-                    className={`playlist-item ${i === currentIndex ? 'active' : ''}`}
-                    onClick={() => playTrack(file, i)}
-                  >
-                    <Music size={16} />
-                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {file.name}
-                    </span>
+              {isSending && (
+                  <div className="progress-container" style={{ margin: '5px auto 15px auto', width: '100%' }}>
+                    <div className="progress-bar" style={{ width: `${transferProgress}%` }}></div>
+                     <div style={{ fontSize: '0.8rem', marginTop: '6px', textAlign: 'center', color: 'var(--accent-color)' }}>
+                       Transferring Audio... {transferProgress}%
+                    </div>
                   </div>
-                ))}
+              )}
+
+              <div className="controls-row" style={{ marginTop: 10 }}>
+                <button className={`btn btn-secondary btn-icon`} onClick={toggleShuffle} style={{ borderColor: isShuffle ? 'var(--accent-color)' : 'transparent', color: isShuffle ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
+                    <Shuffle size={18} />
+                </button>
+                <button className="btn btn-secondary btn-icon" onClick={handlePrev} disabled={currentIndex <= 0}>
+                  <SkipBack size={22} />
+                </button>
+                <button className="btn btn-play" onClick={togglePlay} disabled={files.length === 0 || isSending}>
+                  {isPlaying ? <Pause fill="currentColor" size={28} /> : <Play fill="currentColor" size={28} />}
+                </button>
+                <button className="btn btn-secondary btn-icon" onClick={handleNext} disabled={currentIndex >= files.length - 1}>
+                  <SkipForward size={22} />
+                </button>
+                <button className={`btn btn-secondary btn-icon`} onClick={toggleLoop} style={{ borderColor: isLooping ? 'var(--accent-color)' : 'transparent', color: isLooping ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
+                    <Repeat size={18} />
+                </button>
               </div>
-            )}
-          </div>
+            </div>
+
+            <div className="widget-card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 15 }}>
+               <VolumeX size={18} color="var(--text-secondary)" />
+               <input 
+                  type="range" 
+                  min="0" 
+                  max="1" 
+                  step="0.01"
+                  value={volume} 
+                  onChange={handleVolume}
+                  style={{ flex: 1, accentColor: 'var(--accent-secondary)', height: 4, cursor: 'pointer' }}
+                />
+               <Volume2 size={18} color="var(--text-secondary)" />
+            </div>
+
+            <div className="widget-card" style={{ padding: '20px' }}>
+               <label className="file-label" style={{ padding: '16px' }}>
+                  <input type="file" className="file-input" multiple accept="audio/*" onChange={handleFileSelect} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Upload size={20} style={{ opacity: 0.7 }} />
+                    <span style={{ fontWeight: 500 }}>Upload Local Audio</span>
+                  </div>
+               </label>
+               
+              {files.length > 0 && (
+                <div className="playlist">
+                  {files.map((file, i) => (
+                    <div 
+                      key={i} 
+                      className={`playlist-item ${i === currentIndex ? 'active' : ''}`}
+                      onClick={() => playTrack(file, i)}
+                    >
+                      <Music size={16} style={{ minWidth: 16 }} />
+                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {file.name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
